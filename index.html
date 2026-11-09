@@ -92,9 +92,9 @@ nav button.on{color:var(--ac);background:var(--act)}
 <div id="modal" hidden></div>
 <div id="toast"></div>
 <script>
-const K='salle-podor-v1',MODES=['Espèces','Wave','Orange Money'],CATS=['Cardio','Musculation','Accessoires','Mobilier','Autre'];
+const K='salle-podor-v1',MODES=['Espèces','Wave','Orange Money'],CATS=['Cardio','Musculation','Accessoires','Mobilier','Aménagement','Autre'];
 const EC=['Loyer','Électricité et eau','Salaires','Entretien','Publicité','Autre'];
-let S={members:[],plans:[{id:'p1',nom:'Séance',jours:1,prix:1000},{id:'p2',nom:'Mensuel',jours:30,prix:10000},{id:'p3',nom:'Trimestriel',jours:90,prix:27000}],subs:[],checks:[],inv:[],exp:[],prods:[],sales:[]};
+let S={members:[],plans:[{id:'p1',nom:'Séance',jours:1,prix:1000},{id:'p2',nom:'Mensuel',jours:30,prix:10000},{id:'p3',nom:'Trimestriel',jours:90,prix:27000}],subs:[],checks:[],inv:[],exp:[],prods:[],sales:[],budget:{},sim:{}};
 try{const r=localStorage.getItem(K);if(r)S=Object.assign(S,JSON.parse(r))}catch(e){}
 const save=()=>{try{localStorage.setItem(K,JSON.stringify(S))}catch(e){}};
 const $=s=>document.querySelector(s);
@@ -107,6 +107,7 @@ const today=()=>{const d=new Date();return new Date(d-d.getTimezoneOffset()*6e4)
 const addD=(d,n)=>{const x=new Date(d+'T12:00:00');x.setDate(x.getDate()+n);return x.toISOString().slice(0,10)};
 const diff=d=>Math.round((new Date(d+'T12:00:00')-new Date(today()+'T12:00:00'))/864e5);
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const norm=t=>String(t||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
 const fd=d=>new Date(d+'T12:00:00').toLocaleDateString('fr-FR');
 const paid=s=>s.pays.reduce((t,p)=>t+p.a,0),reste=s=>s.prix-paid(s);
 const lastVis=id=>S.checks.filter(c=>c.mid===id).map(c=>c.d).sort().pop();
@@ -171,9 +172,10 @@ function editPlan(id){
 }
 function editInv(id){
   const i=S.inv.find(x=>x.id===id)||{};
+  let warned=false;
   form(id?'Modifier l’équipement':'Nouvel équipement',[
     {k:'nom',l:'Équipement',v:i.nom},
-    {k:'cat',l:'Catégorie',v:i.cat,opts:CATS.map(x=>[x,x])},
+    {k:'cat',l:'Catégorie',v:i.cat,opts:[['','Choisir une catégorie…'],...CATS.map(x=>[x,x])]},
     {k:'qte',l:'Quantité',t:'number',v:i.qte||1},
     {k:'pu',l:'Prix unitaire (FCFA)',t:'number',v:i.pu},
     {k:'fn',l:'Fournisseur (nom)',v:i.fn},
@@ -181,6 +183,9 @@ function editInv(id){
     {k:'date',l:'Date d’achat',t:'date',v:i.date||today()}
   ],v=>{
     if(!v.nom){toast('Le nom est obligatoire');return false}
+    if(!v.cat){toast('Choisis une catégorie');return false}
+    const dup=S.inv.find(x=>x.id!==id&&norm(x.nom)===norm(v.nom));
+    if(dup&&!warned){warned=true;toast('Doublon probable : « '+dup.nom+' » existe déjà. Appuie à nouveau sur Enregistrer pour confirmer.');return false}
     const d={nom:v.nom,cat:v.cat,qte:+v.qte||1,pu:+v.pu||0,fn:v.fn,ft:v.ft,date:v.date};
     if(id)Object.assign(i,d);else S.inv.push({id:uid(),...d});
     save();render()
@@ -210,7 +215,7 @@ function backup(){
   $('#ej').onclick=()=>{S.lastBackup=today();save();dl('sauvegarde-salle-'+today()+'.json',new Blob([JSON.stringify(S,null,1)],{type:'application/json'}));toast('Fichier JSON enregistré')};
   $('#ex').onclick=exportXlsx;
   $('#cp').onclick=async()=>{try{await navigator.clipboard.writeText(bx.value);toast('Sauvegarde copiée')}catch(e){bx.focus();bx.select();toast('Texte sélectionné : copie-le depuis le menu du téléphone')}};
-  const ok=d=>d&&['members','plans','subs','checks','inv'].every(k=>Array.isArray(d[k])),apply=d=>{S=Object.assign({exp:[],prods:[],sales:[]},d);save();m.hidden=true;render();toast('Données importées')};
+  const ok=d=>d&&['members','plans','subs','checks','inv'].every(k=>Array.isArray(d[k])),apply=d=>{S=Object.assign({exp:[],prods:[],sales:[],budget:{},sim:{}},d);save();m.hidden=true;render();toast('Données importées')};
   let pend=null,c=0,c2=0;const im=$('#im'),im2=$('#im2');
   $('#bf').onchange=e=>{const fl=e.target.files[0];if(!fl)return;const r=new FileReader();r.onload=()=>{try{const d=JSON.parse(r.result);if(!ok(d))throw 0;pend=d;c=0;im.disabled=false;im.textContent='Importer';toast('Fichier valide')}catch(x){pend=null;im.disabled=true;toast('Ce fichier n’est pas une sauvegarde valide')}};r.readAsText(fl)};
   im.onclick=()=>{if(!pend)return;if(!c++){im.textContent='Confirmer le remplacement';return}apply(pend)};
@@ -252,10 +257,10 @@ function vInv(){
   const tot=i=>i.qte*i.pu,all=S.inv.reduce((t,i)=>t+tot(i),0),l=S.inv.filter(i=>!fc||i.cat===fc).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
   const by=(k)=>{const o={};S.inv.forEach(i=>{const n=i[k]||'Sans fournisseur';o[n]=(o[n]||0)+tot(i)});return Object.entries(o).sort((a,b)=>b[1]-a[1])};
   return '<div class="k" style="margin-top:8px"><b>'+fk(all)+'</b><span>Total investi · '+S.inv.length+' équipement'+(S.inv.length>1?'s':'')+'</span></div>'+
-  '<button class="b1 full" data-a="addinv" style="margin-top:10px">Ajouter un équipement</button>'+
+  '<button class="b1 full" data-a="addinv" style="margin-top:10px">Ajouter un équipement</button>'+suggBtn()+
   '<select id="fc" aria-label="Filtrer par catégorie"><option value="">Toutes les catégories</option>'+CATS.map(c=>'<option'+(c===fc?' selected':'')+'>'+c+'</option>').join('')+'</select><div style="margin-top:10px">'+
-  (l.length?l.map(i=>'<div class="it"><div class="top"><div><div class="nm">'+esc(i.nom)+'</div><div class="mu">'+esc(i.cat)+' · '+i.qte+' × '+f(i.pu)+'</div></div><b>'+f(tot(i))+'</b></div><div class="mu" style="margin-top:6px">'+(i.fn||i.ft?esc(i.fn||'Fournisseur')+(i.ft?' · <a href="tel:'+esc(i.ft)+'" style="color:var(--ac)">'+esc(i.ft)+'</a>':''):'Fournisseur non renseigné')+'</div><div class="row"><button data-a="ei" data-id="'+i.id+'">Modifier</button></div></div>').join(''):empty('Aucun équipement dans cette liste.'))+'</div>'+
-  (S.inv.length?'<h2>Par catégorie</h2>'+by('cat').map(x=>'<div class="it top"><span>'+esc(x[0])+'</span><b>'+f(x[1])+'</b></div>').join('')+'<h2>Par fournisseur</h2>'+by('fn').map(x=>'<div class="it top"><span>'+esc(x[0])+'</span><b>'+f(x[1])+'</b></div>').join(''):'');
+  (l.length?l.map(i=>'<div class="it"><div class="top"><div><div class="nm">'+esc(i.nom)+'</div><div class="mu">'+esc(i.cat)+' · '+i.qte+' × '+f(i.pu)+'</div></div><b>'+f(tot(i))+'</b></div><div class="mu" style="margin-top:6px">'+(i.fn||i.ft?esc(i.fn||'Fournisseur')+(i.ft?' · <a href="tel:'+esc(i.ft)+'" style="color:var(--ac)">'+esc(i.ft)+'</a>':''):'Fournisseur non renseigné')+'</div><div class="row"><button data-a="ei" data-id="'+i.id+'">Modifier</button><button data-a="i2e" data-id="'+i.id+'">Passer en dépense</button></div></div>').join(''):empty('Aucun équipement dans cette liste.'))+'</div>'+
+  (S.inv.length?'<h2>Par catégorie</h2>'+by('cat').map(x=>'<div class="it top"><span>'+esc(x[0])+'</span><b>'+f(x[1])+'</b></div>').join('')+'<h2>Par fournisseur</h2>'+by('fn').map(x=>'<div class="it top"><span>'+esc(x[0])+'</span><b>'+f(x[1])+'</b></div>').join(''):'')+budgetSec();
 }
 let bm=today().slice(0,7),mq='',mfv='';
 function editExp(id){
@@ -277,7 +282,7 @@ function vBil(){
   '<div class="kp" style="margin-top:10px"><div class="k"><b>'+fk(rev)+'</b><span>Revenus encaissés</span></div><div class="k"><b>'+fk(dep)+'</b><span>Dépenses</span></div></div>'+
   '<div class="k" style="margin-top:10px"><b style="color:var(--'+(net<0?'rd':'gn')+')">'+fk(net)+'</b><span>Résultat net · '+(bm?mlab(bm):'tous les mois')+'</span></div>'+
   hist6(pays)+'<h2>Point mort (depuis le début)</h2><div class="it"><div class="top"><span>Investissement</span><b>'+f(inv)+'</b></div><div class="top" style="margin-top:6px"><span>Résultat net cumulé</span><b>'+f(cum)+'</b></div><div style="height:8px;background:var(--grb);border-radius:4px;margin:10px 0 6px;overflow:hidden"><div style="height:100%;width:'+pct+'%;background:var(--ac)"></div></div><div class="mu">'+msg+'</div></div>'+
-  '<h2>Dépenses</h2><button class="b1 full" data-a="adde">Ajouter une dépense</button>'+(ex.length?ex.map(e=>'<div class="it"><div class="top"><div><div class="nm">'+esc(e.lib)+'</div><div class="mu">'+esc(e.cat)+' · '+fd(e.d)+'</div></div><b>'+f(e.a)+'</b></div><div class="row"><button data-a="ee" data-id="'+e.id+'">Modifier</button></div></div>').join(''):empty('Aucune dépense sur cette période.'));
+  simSec()+'<h2>Dépenses</h2><button class="b1 full" data-a="adde">Ajouter une dépense</button>'+(ex.length?ex.map(e=>'<div class="it"><div class="top"><div><div class="nm">'+esc(e.lib)+'</div><div class="mu">'+esc(e.cat)+' · '+fd(e.d)+'</div></div><b>'+f(e.a)+'</b></div><div class="row"><button data-a="ee" data-id="'+e.id+'">Modifier</button></div></div>').join(''):empty('Aucune dépense sur cette période.'));
 }
 function freeze(id){
   const s=S.subs.find(x=>x.id===id);
@@ -342,6 +347,41 @@ function hist6(pays){
   const r=ms.map(m=>t(pays,m)),d=ms.map(m=>t(S.exp,m)),mx=Math.max(1,...r,...d);
   return '<h2>6 derniers mois</h2><div class="it"><div style="display:flex;align-items:flex-end;gap:8px;height:100px">'+ms.map((m,i)=>'<div style="flex:1;text-align:center"><div style="display:flex;align-items:flex-end;justify-content:center;gap:3px;height:70px"><div title="Revenus" style="width:42%;height:'+Math.round(r[i]/mx*70)+'px;min-height:2px;background:var(--ac);border-radius:3px 3px 0 0"></div><div title="Dépenses" style="width:42%;height:'+Math.round(d[i]/mx*70)+'px;min-height:2px;background:var(--or);border-radius:3px 3px 0 0"></div></div><div class="mu" style="font-size:11px">'+new Date(m+'-15T12:00:00').toLocaleDateString('fr-FR',{month:'short'}).replace('.','')+'</div></div>').join('')+'</div><div class="mu" style="margin-top:8px"><span style="color:var(--ac)">■</span> Revenus · <span style="color:var(--or)">■</span> Dépenses</div></div>';
 }
+const SG=[[/senelec|sonatel|loyer|internet|electricite|facture/,'dep'],[/yoga|gant|corde|ballon|step|dallette|elastique|bande|rouleau/,'Accessoires'],[/moquette|colle|peinture|electricien|plomb|carrelage|miroir|climatis|travaux|installation|main d.?oeuvre/,'Aménagement'],[/barre|disque|haltere|malette|banc|kettlebell|rack|presse|poulie|poids/,'Musculation'],[/velo|elliptique|rameur|tapis/,'Cardio']];
+function suggCat(nom){const n=norm(nom);for(const [re,c] of SG)if(re.test(n))return c;return null}
+const suggList=()=>S.inv.map(i=>({i,c:suggCat(i.nom)})).filter(x=>x.c&&(x.c==='dep'||x.c!==x.i.cat));
+const expCat=n=>{n=norm(n);return /senelec|electricite|eau/.test(n)?'Électricité et eau':/loyer/.test(n)?'Loyer':'Autre'};
+function toExp(i,cat){S.exp.push({id:uid(),lib:i.nom,cat:cat||expCat(i.nom),a:i.qte*i.pu,d:i.date||today()});S.inv=S.inv.filter(x=>x!==i)}
+function suggBtn(){const n=suggList().length;return n?'<button class="full" data-a="sgg">Corriger les catégories ('+n+' suggestion'+(n>1?'s':'')+')</button>':''}
+function sugg(){
+  const l=suggList(),m=$('#modal');
+  m.innerHTML='<div class="sheet"><h3>Catégories suggérées</h3><p class="mu">Propositions d’après le nom. Rien ne change tant que tu n’appuies pas sur « Tout appliquer ». Les lignes marquées « Dépense » passent dans l’onglet Bilan.</p>'+l.map(x=>'<div class="it"><div class="nm">'+esc(x.i.nom)+'</div><div class="mu">'+esc(x.i.cat)+' → <b>'+(x.c==='dep'?'Dépense':x.c)+'</b></div></div>').join('')+'<div class="row"><button id="cx">Fermer</button><button class="b1" id="okb">Tout appliquer</button></div></div>';
+  m.hidden=false;m.onclick=e=>{if(e.target===m)m.hidden=true};
+  $('#cx').onclick=()=>m.hidden=true;
+  $('#okb').onclick=()=>{l.forEach(x=>{if(x.c==='dep')toExp(x.i);else x.i.cat=x.c});save();m.hidden=true;render();toast(l.length+' lignes corrigées')};
+}
+function inv2exp(id){
+  const i=S.inv.find(x=>x.id===id);
+  form('Passer en dépense · '+esc(i.nom),[{k:'cat',l:'Catégorie de la dépense',v:expCat(i.nom),opts:EC.map(c=>[c,c])}],v=>{toExp(i,v.cat);save();render();toast('Déplacé dans les dépenses')});
+}
+function budgetForm(){
+  form('Budget prévu par catégorie (FCFA)',CATS.map(c=>({k:c,l:c,t:'number',v:S.budget[c]||''})),v=>{S.budget={};CATS.forEach(c=>{const n=+v[c];if(n>0)S.budget[c]=n});save();render()});
+}
+function budgetSec(){
+  const sp={};S.inv.forEach(i=>sp[i.cat]=(sp[i.cat]||0)+i.qte*i.pu);
+  const bd=S.budget||{},cats=CATS.filter(c=>bd[c]>0||sp[c]>0),tb=CATS.reduce((t,c)=>t+(+bd[c]||0),0),tr=CATS.reduce((t,c)=>t+(sp[c]||0),0);
+  return '<h2>Budget prévu / réalisé</h2><button class="full" data-a="bud">Définir le budget</button>'+(tb?'<div class="mu" style="margin-bottom:8px">Budget total '+f(tb)+' · réalisé '+f(tr)+'</div>':'')+(cats.length?cats.map(c=>{const b=+bd[c]||0,r=sp[c]||0,over=b>0&&r>b,pct=b>0?Math.min(100,Math.round(r/b*100)):0;return '<div class="it"><div class="top"><span class="nm">'+esc(c)+'</span><b>'+f(r)+(b?' / '+f(b):'')+'</b></div>'+(b?'<div style="height:8px;background:var(--grb);border-radius:4px;margin:10px 0 6px;overflow:hidden"><div style="height:100%;width:'+pct+'%;background:var(--'+(over?'rd':'ac')+')"></div></div><div class="mu" style="color:var(--'+(over?'rd':'mu')+')">'+(over?'Dépassement de '+f(r-b):'Reste '+f(b-r))+'</div>':'<div class="mu">Pas de budget défini</div>')+'</div>'}).join(''):empty('Aucun budget défini.'));
+}
+function simSec(){
+  const sm=S.sim||{},pm0=(S.plans.find(p=>p.nom==='Mensuel')||{}).prix||15000,dms=new Set(S.exp.map(e=>e.d.slice(0,7))),ch=sm.ch!=null?sm.ch:(dms.size?Math.round(S.exp.reduce((t,e)=>t+e.a,0)/dms.size):0);
+  return '<h2>Simulation d’ouverture</h2><div class="it"><label>Abonnés mensuels visés<input id="sn" type="number" inputmode="numeric" min="0" value="'+(sm.n??30)+'"></label><label>Prix de l’abonnement mensuel (FCFA)<input id="sp" type="number" inputmode="numeric" min="0" value="'+(sm.prix??pm0)+'"></label><label>Charges mensuelles : loyer, électricité, salaires…<input id="sc" type="number" inputmode="numeric" min="0" value="'+ch+'"></label><div id="simr"></div></div>';
+}
+function simUpdate(sv){
+  const n=+$('#sn').value||0,pr=+$('#sp').value||0,ch=+$('#sc').value||0;
+  if(sv){S.sim={n,prix:pr,ch};save()}
+  const inv=S.inv.reduce((t,i)=>t+i.qte*i.pu,0),rev=n*pr,net=rev-ch,seuil=pr>0?Math.ceil(ch/pr):0,an=pr>0?Math.ceil((ch+inv/12)/pr):0;
+  $('#simr').innerHTML='<div class="top"><span>Revenu mensuel</span><b>'+f(rev)+'</b></div><div class="top" style="margin-top:6px"><span>Résultat net mensuel</span><b style="color:var(--'+(net<0?'rd':'gn')+')">'+f(net)+'</b></div><div class="mu" style="margin-top:10px">Pour couvrir seulement les charges : <b>'+seuil+'</b> abonnés. Pour amortir '+f(inv)+' en 12 mois : <b>'+an+'</b> abonnés.</div><div class="mu" style="margin-top:6px">'+(inv>0?(net>0?'Avec '+n+' abonnés, l’investissement est amorti en environ <b>'+Math.ceil(inv/net)+'</b> mois.':'Avec ce nombre d’abonnés, le résultat net n’est pas positif : l’investissement ne peut pas être amorti.'):'')+'</div>';
+}
 const ICO={home:'<path d="M3 11l9-8 9 8v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>',mem:'<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6M16 4.6a3.5 3.5 0 0 1 0 6.8M18.5 14.4c2 .8 3 2.7 3 5.6"/>',sub:'<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>',pay:'<rect x="2.5" y="6" width="19" height="13" rx="2.5"/><path d="M2.5 10h19"/><circle cx="16.5" cy="14.5" r="1.2"/>',bil:'<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',inv:'<path d="M6.5 7v10M17.5 7v10M3.5 9.5v5M20.5 9.5v5M6.5 12h11"/>'};
 const IC=k=>'<svg viewBox="0 0 24 24" aria-hidden="true">'+ICO[k]+'</svg>';
 const T=[['home','Accueil',vHome],['mem','Membres',vMem],['sub','Abonnements',vSub],['pay','Paiements',vPay],['bil','Bilan',vBil],['inv','Invest.',vInv]];
@@ -352,14 +392,14 @@ function render(){
   if(tab==='mem'){$('#q').value=mq;$('#mf').value=mfv;listMem();$('#q').oninput=listMem;$('#mf').onchange=listMem}
   if(tab==='inv')$('#fc').onchange=e=>{fc=e.target.value;render()};
   if(tab==='pay')$('#pm').onchange=e=>{pm=e.target.value;render()};
-  if(tab==='bil')$('#bm').onchange=e=>{bm=e.target.value;render()};
+  if(tab==='bil'){$('#bm').onchange=e=>{bm=e.target.value;render()};['#sn','#sp','#sc'].forEach(q=>$(q).oninput=()=>simUpdate(true));simUpdate()}
   if(tab==='home')$('#qc').oninput=qcList;
 }
 const act={
   tab:id=>{tab=id;render();scrollTo(0,0)},
   addm:()=>editMember(),em:id=>editMember(id),
   sub:id=>openSub(id),plan:id=>editPlan(id),pay:id=>collect(id),
-  addinv:()=>editInv(),ei:id=>editInv(id),bk:()=>backup(),adde:()=>editExp(),frz:id=>freeze(id),sell:()=>sell(),addp:()=>editProd(),ep:id=>editProd(id),fm:id=>fiche(id),cl:()=>{$('#modal').hidden=true},ee:id=>editExp(id),
+  addinv:()=>editInv(),ei:id=>editInv(id),bk:()=>backup(),adde:()=>editExp(),frz:id=>freeze(id),i2e:id=>inv2exp(id),sgg:()=>sugg(),bud:()=>budgetForm(),sell:()=>sell(),addp:()=>editProd(),ep:id=>editProd(id),fm:id=>fiche(id),cl:()=>{$('#modal').hidden=true},ee:id=>editExp(id),
   chk:id=>{
     if(S.checks.some(c=>c.mid===id&&c.d===today()))return toast('Déjà pointé aujourd’hui');
     S.checks.push({mid:id,d:today()});save();
